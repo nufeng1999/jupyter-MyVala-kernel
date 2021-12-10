@@ -1,11 +1,6 @@
-# C kernel for Jupyter
-
-This project was forked from [https://github.com/brendan-rius/jupyter-c-kernel](brendan-rius/jupyter-c-kernel) as that project seems to have been abandoned. (PR is pending)
-
+# Vala kernel for Jupyter
 
 ## Manual installation
-
-Works only on Linux and OS X. Windows is not supported yet. If you want to use this project on Windows, please use Docker.
 
 * Make sure you have the following requirements installed:
   * vala
