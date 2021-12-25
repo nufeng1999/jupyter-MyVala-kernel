@@ -1262,7 +1262,7 @@ class MyValaKernel(MyKernel):
     implementation = 'jupyter-MyVala-kernel'
     implementation_version = '1.0'
     language = 'Vala'
-    language_version = ' '
+    language_version = ''
     language_info = {'name': 'text/vala',
                      'mimetype': 'text/vala',
                      'file_extension': '.vala'}
