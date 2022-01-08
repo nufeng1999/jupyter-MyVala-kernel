@@ -80,7 +80,7 @@ class MyValaKernel(MyKernel):
         self.kernelinfo="[MyValaKernel{0}]".format(time.strftime("%H%M%S", time.localtime()))
         
 #################
-    def compile_with_valac(self, source_filename, binary_filename, cflags=None, ldflags=None,env=None):
+    def compile_with_valac(self, source_filename, binary_filename, cflags=None, ldflags=None,env=None,magics=None):
         # cflags = ['-std=c89', '-pedantic', '-fPIC', '-shared', '-rdynamic'] + cflags
         # cflags = ['-std=c99', '-Wdeclaration-after-statement', '-Wvla', '-fPIC', '-shared', '-rdynamic'] + cflags
         # cflags = ['-std=iso9899:199409', '-pedantic', '-fPIC', '-shared', '-rdynamic'] + cflags
@@ -121,7 +121,8 @@ class MyValaKernel(MyKernel):
                 binary_file.name,
                 self.mymagics.get_magicsSvalue(magics,'cflags'),
                 self.mymagics.get_magicsSvalue(magics,'ldflags'),
-                self.mymagics.get_magicsbykey(magics,'env')
+                self.mymagics.get_magicsbykey(magics,'env'),
+                magics
                 )
             returncode=p.wait_end(magics)
             p.write_contents()
@@ -134,79 +135,11 @@ class MyValaKernel(MyKernel):
                 os.remove(source_filename)
                 os.remove(binary_file.name)
         return p.returncode,binary_file.name
-    def _start_gdb(self):
-        # Signal handlers are inherited by forked processes, and we can't easily
-        # reset it from the subprocess. Since kernelapp ignores SIGINT except in
-        # message handlers, we need to temporarily reset the SIGINT handler here
-        # so that bash and its children are interruptible.
-        sig = signal.signal(signal.SIGINT, signal.SIG_DFL)
-        try:
-            if hasattr(self, 'gdbwrapper'):
-                return
-        finally:
-            pass
-        try:
-            # self._write_to_stdout("------exec gdb-----\n")
-            child = pexpect.spawn('gdb', ['-q'], echo=False,encoding='utf-8')
-            self.gdbwrapper = IREPLWrapper(child, u'(gdb)', prompt_change=None,
-                                            extra_init_cmd='set pagination off',
-                                            line_output_callback=self.process_output)
-        except Exception as e:
-            # self._write_to_stdout("-----------IREPLWrapper err "+str(e)+"!\n")
-            exitcode = 1
-        finally:
-            signal.signal(signal.SIGINT, sig)
-    def do_replexecutegdb(self, code, silent, store_history=True,
-                   user_expressions=None, allow_stdin=True):
-        self.silent = silent
-        if not code.strip():
-            return {'status': 'ok', 'execution_count': self.execution_count,
-                    'payload': [], 'user_expressions': {}}
-        interrupted = False
-        try:
-            # Note: timeout=None tells IREPLWrapper to do incremental
-            # output.  Also note that the return value from
-            # run_command is not needed, because the output was
-            # already sent by IREPLWrapper.
-            self.gdbwrapper.run_command(code.rstrip(), timeout=None)
-        except KeyboardInterrupt:
-            self.gdbwrapper.child.sendintr()
-            interrupted = True
-            self.gdbwrapper._expect_prompt()
-            output = self.gdbwrapper.child.before
-            self.process_output(output)
-        except EOF:
-            output = self.gdbwrapper.child.before + 'Restarting GDB'
-            self._start_gdb()
-            self.process_output(output)
-        if interrupted:
-            return {'status': 'abort', 'execution_count': self.execution_count}
-        try:
-            if code.rstrip().startswith('shell'):
-                exitcode = int(self.gdbwrapper.run_command('shell echo $?').rstrip())
-            else:
-                exitcode = int(self.gdbwrapper.run_command('echo $?').rstrip())
-        except Exception:
-            exitcode = 1
-        if exitcode:
-            error_content = {'execution_count': self.execution_count,
-                             'ename': '', 'evalue': str(exitcode), 'traceback': []}
-            self.send_response(self.iopub_socket, 'error', error_content)
-            error_content['status'] = 'error'
-            return error_content
-        else:
-            return {'status': 'ok', 'execution_count': self.execution_count,
-                    'payload': [], 'user_expressions': {}}
-    def replgdb_sendcmd(self,code,silent, store_history=True,
-                   user_expressions=None, allow_stdin=True):
-        self._start_gdb()
-        return self.do_replexecutegdb( code.replace('//%rungdb', ''), silent, store_history,
-                   user_expressions, False)
 ##do_runcode
-    def do_runcode(self,return_code,fil_ename,magics,code, silent, store_history=True,
+    def do_runcode(self,return_code,file_name,magics,code, silent, store_history=True,
                     user_expressions=None, allow_stdin=True):
         return_code=return_code
-        fil_ename=fil_ename
+        file_name=file_name
         bcancel_exec=False
         retinfo=self.mymagics.get_retinfo()
         retstr=''
@@ -214,10 +147,10 @@ class MyValaKernel(MyKernel):
         ################# repl mode run code files
         #FIXME:
         if magics['_st']['runmode']=='repl':
-            self.mymagics._start_replprg(fil_ename,magics['_st']['args'],magics)
+            self.mymagics._start_replprg(file_name,magics['_st']['args'],magics)
             return_code=self.mymagics.replwrapper.child.status
-            bcancel_exec,retstr=self.mymagics.raise_plugin(code,magics,return_code,fil_ename,3,2)
-            return bcancel_exec,retinfo,magics, code,fil_ename,retstr
+            bcancel_exec,retstr=self.mymagics.raise_plugin(code,magics,return_code,file_name,3,2)
+            return bcancel_exec,retinfo,magics, code,file_name,retstr
         ############################################
     ############################################
         p=None
@@ -225,16 +158,16 @@ class MyValaKernel(MyKernel):
         #FIXME:
         
         if len(magics['dlrun'])>0:
-            p = self.mymagics.create_jupyter_subprocess([self.master_path, fil_ename] + magics['_st']['args'],env=self.addkey2dict(magics,'env'))
+            p = self.mymagics.create_jupyter_subprocess([self.master_path, file_name] + magics['_st']['args'],env=self.mymagics.addkey2dict(magics,'env'))
         #################
         else:
-            p = self.mymagics.create_jupyter_subprocess([fil_ename] + magics['_st']['args'],env=self.addkey2dict(magics,'env'),magics=magics)
+            p = self.mymagics.create_jupyter_subprocess([file_name] + magics['_st']['args'],env=self.mymagics.addkey2dict(magics,'env'),magics=magics)
         self.mymagics.subprocess=p
         self.mymagics.g_rtsps[str(p.pid)]=p
         return_code=p.returncode
         ##代码启动后
-        bcancel_exec,retstr=self.mymagics.raise_plugin(code,magics,return_code,fil_ename,3,2)
-        # if bcancel_exec:return bcancel_exec,retinfo,magics, code,fil_ename,retstr
+        bcancel_exec,retstr=self.mymagics.raise_plugin(code,magics,return_code,file_name,3,2)
+        # if bcancel_exec:return bcancel_exec,retinfo,magics, code,file_name,retstr
         
         if len(self.mymagics.addkey2dict(magics,'showpid'))>0:
             self.mymagics._write_to_stdout("The process PID:"+str(p.pid)+"\n")
@@ -248,27 +181,27 @@ class MyValaKernel(MyKernel):
             # os.remove(binary_filename)
         # if p.returncode != 0:
             # self._write_to_stderr("[C kernel] Executable exited with code {}".format(p.returncode))
-        return bcancel_exec,retinfo,magics, code,fil_ename,retstr
+        return bcancel_exec,retinfo,magics, code,file_name,retstr
 ##do_compile_code
-    def do_compile_code(self,return_code,fil_ename,magics,code, silent, store_history=True,
+    def do_compile_code(self,return_code,file_name,magics,code, silent, store_history=True,
                     user_expressions=None, allow_stdin=True):
         return_code=0
-        fil_ename=fil_ename
-        sourcefilename=fil_ename
+        file_name=file_name
+        sourcefilename=file_name
         bcancel_exec=False
         retinfo=self.mymagics.get_retinfo()
         retstr=''
-        returncode,binary_filename=self._exec_valac_(fil_ename,magics)
-        fil_ename=binary_filename
+        returncode,binary_filename=self._exec_valac_(file_name,magics)
+        file_name=binary_filename
         return_code=returncode
         
-        if returncode!=0:return  True,retinfo, code,fil_ename,retstr
-        return bcancel_exec,retinfo,magics, code,fil_ename,retstr
+        if returncode!=0:return  True,retinfo, code,file_name,retstr
+        return bcancel_exec,retinfo,magics, code,file_name,retstr
 ##do_create_codefile
     def do_create_codefile(self,magics,code, silent, store_history=True,
                     user_expressions=None, allow_stdin=True):
         return_code=0
-        fil_ename=''
+        file_name=''
         sourcefilename=''
         bcancel_exec=False
         retinfo=self.mymagics.get_retinfo()
@@ -276,23 +209,25 @@ class MyValaKernel(MyKernel):
         source_file=self.mymagics.create_codetemp_file(magics,code,suffix='.vala')
         sourcefilename=source_file.name 
         newsrcfilename=source_file.name
-        fil_ename=newsrcfilename
+        file_name=newsrcfilename
         return_code=True
-        return  bcancel_exec,self.mymagics.get_retinfo(),magics, code,fil_ename,retstr
+        return  bcancel_exec,self.mymagics.get_retinfo(),magics, code,file_name,retstr
 ##do_preexecute
     def do_preexecute(self,code,magics, silent, store_history=True,
                 user_expressions=None, allow_stdin=False):
         bcancel_exec=False
         retinfo=self.mymagics.get_retinfo()
         ############# run gdb and send command begin
-        if len(magics['rungdb'])>0:
+        # self.mymagics._logln(magics['rungdb'])
+        if len(self.mymagics.get_magicsbykey(magics,'rungdb'))>0:
+            # self.mymagics._logln(magics['rungdb'])
             bcancel_exec=True
             retinfo= self.mymagics.replgdb_sendcmd(code,silent, store_history,
                 user_expressions, allow_stdin)
             return bcancel_exec,retinfo,magics, code
         ############# run gdb and send command
         #############send replcmd's command
-        if magics['_st']['runmode']=='repl':
+        if self.mymagics.get_magicsSvalue(magics,'runmode')=='repl':
             if hasattr(self, 'replcmdwrapper'):
                 if self.replcmdwrapper :
                     bcancel_exec=True
